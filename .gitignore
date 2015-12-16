@@ -6,6 +6,7 @@ skript.R
 .Rhistory
 .Rdata
 .zip
-AET/
-HumanPop/
-mean_esriasciiNDVI/
+RichnessRegression/AET/
+RichnessRegression/HumanPop/
+RichnessRegression/mean_esriasciiNDVI/
+RichnessRegression/TERRESTRIAL _MAMMALS/
