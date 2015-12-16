@@ -1,0 +1,102 @@
+--- 
+title: 'Biodiversity Inter-Model Comparison: I. richness regression'
+author: "Carsten F. Dormann"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    fig_height: 7
+    number_sections: yes
+    theme: readable
+    toc: yes
+  pdf_document:
+    number_sections: yes
+    toc: yes
+---
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(cache=TRUE, comment=NA, fig.align='center', warning=FALSE, message=FALSE)
+options(width = 100) 
+```
+
+# Introduction
+The simple-most approach to predicting effects of climate and land-use change on species richness is, I guess, a regression. This page documents how one could approach this.
+
+
+# Data
+
+## Species data
+The basis of this analysis are IUCN range maps for all terrestrial mammals (version 4, downloaded 20 Nov 2015). 
+
+## Rasterising species data
+IUCN-data are provided as shape-files.
+First we read them in and transform them to equal-area Mollweide projection:
+```{r}
+setwd("/Users/cdormann/Data/aktuell/SpeciesDistributionAnalyses/BiodivModelComparison/RichnessRegression")
+
+if ("BIMC_alldata.Rdata" %in% dir()) {
+  load("BIMC_alldata.Rdata") # load data if already processed
+} else {
+  library(maptools)
+  mams <- readShapeSpatial("TERRESTRIAL_MAMMALS/TERRESTRIAL_MAMMALS")
+  mams@proj4string <- CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs +towgs84=0,0,0")
+  mamsMoll <- spTransform(mams, CRS('+proj=moll')) 
+  # as a reference map, we also transform wrld_simpl:
+  data(wrld_simpl)
+  wrld <- spTransform(wrld_simpl, CRS('+proj=moll'))
+  rm(mams, wrld_simpl)
+  save.image("BIMC_alldata.Rdata")
+}
+```
+Next, we make a raster of (very close to) 100 x 100 km cells for the same extent and in the same projection. Note that in package **raster** only polygons including the centre of a cell are included into a cell. Thus, any small-ranged species has a fair chance of being overlooked when rastrising to 100 x 100 km. We can get around this problem by rasterising to 10 x 10 km, and then aggregating it later to 100 x 100 km.
+```{r}
+bbox(mamsMoll) # map extent
+#17702769 + 17876212
+#6496757 + 9020048
+library(raster)
+grid10 <- raster(nrow=1550, ncols=3550, xmn=-17702769, xmx=17876212, ymn=-6496757, ymx=9020048, crs=CRS('+proj=moll'))
+```
+Next, we make a raster stack, with a layer for each species in the IUCN list. Note that we cannot simply rasterise the IUCN shapes for all species directly, as there are many overlapping polygons for each species, which would yield absurd numbers of species!
+```{r}
+# make list of species names:
+speciesNames <- sort(unique(mamsMoll@data$binomial)) # 5265 species
+# get an idea of what a distribution could look like:
+plot(wrld, col="grey", border="white", xlim=c(-11000000, 15000000), ylim=c(-9100000, 8800000))
+plot(rasterize(mamsMoll[which(mamsMoll@data$binomial == "Cervus elaphus"), ], grid10), add=T)
+```
+```{r, eval=FALSE}
+# rasterize first species:
+#speciesStack <- rasterize(mamsMoll[which(mamsMoll@data$binomial == speciesNames[1]), ], grid10)
+load(file="species10x10.Rdata")
+for (i in 151:500){ #length(speciesNames)){
+  oneSpecies <- rasterize(mamsMoll[which(mamsMoll@data$binomial == speciesNames[i]), ], grid10)
+  speciesStack <- addLayer(speciesStack, oneSpecies)
+  cat(i, "  ")
+  rm(oneSpecies)
+}
+save(speciesStack, file="species10x10.Rdata")
+speciesStack100 <- aggregate(speciesStack, fact=c(10, 10), fun=sum)
+rm(speciesStack); gc() # release memory
+save.image(file="BIMC_alldata.Rdata")
+```
+```{r}
+load(file="BIMC_alldata.Rdata")
+# look at an example species in South America:
+plot(wrld, col="grey", border="white", xlim=c(-11000000, 15000000), ylim=c(-9100000, 8800000))
+plot(speciesStack100[[4]], col="red", add=T)
+```
+Next, we compute the number of species in each cell.
+```{r}
+coords100 <- as.data.frame(xyFromCell(speciesStack100, 1:ncell(speciesStack100))) 
+cover100 <- as.data.frame(values(speciesStack100))
+#colnames(cover100) <- levels(speciesNames)
+summary(cover100)
+cover100[!is.na(cover100)] <- 1
+#cover100[cover100 > 0] <- 1
+#cover100[is.na(cover100)] <- 0
+summary(cover100)
+range(S <- rowSums(cover100, na.rm=T))
+excludeCells <- which(S == 0)
+library(lattice)
+levelplot(rowSums(cover100, na.rm=T)[-excludeCells] ~ coords100$x[-excludeCells] + coords100$y[-excludeCells], col.regions=colorRampPalette(c("cyan", "grey10"))(100))
+```
+
