@@ -27,12 +27,11 @@ The simple-most approach to predicting effects of climate and land-use change on
 ## Species data
 The basis of this analysis are IUCN range maps for all terrestrial mammals (version 4, downloaded 20 Nov 2015). 
 
-## Rasterising species data
+### Rasterising species data: rasterise species (option 1).
 IUCN-data are provided as shape-files.
 First we read them in and transform them to equal-area Mollweide projection:
-```{r}
+```{r, eval=FALSE}
 setwd("/Users/cdormann/Data/aktuell/SpeciesDistributionAnalyses/BiodivModelComparison/RichnessRegression")
-
 if ("BIMC_alldata.Rdata" %in% dir()) {
   load("BIMC_alldata.Rdata") # load data if already processed
 } else {
@@ -48,7 +47,7 @@ if ("BIMC_alldata.Rdata" %in% dir()) {
 }
 ```
 Next, we make a raster of (very close to) 100 x 100 km cells for the same extent and in the same projection. Note that in package **raster** only polygons including the centre of a cell are included into a cell. Thus, any small-ranged species has a fair chance of being overlooked when rastrising to 100 x 100 km. We can get around this problem by rasterising to 10 x 10 km, and then aggregating it later to 100 x 100 km.
-```{r}
+```{r, eval=FALSE}
 bbox(mamsMoll) # map extent
 #17702769 + 17876212
 #6496757 + 9020048
@@ -56,7 +55,7 @@ library(raster)
 grid10 <- raster(nrow=1550, ncols=3550, xmn=-17702769, xmx=17876212, ymn=-6496757, ymx=9020048, crs=CRS('+proj=moll'))
 ```
 Next, we make a raster stack, with a layer for each species in the IUCN list. Note that we cannot simply rasterise the IUCN shapes for all species directly, as there are many overlapping polygons for each species, which would yield absurd numbers of species!
-```{r}
+```{r, eval=FALSE}
 # make list of species names:
 speciesNames <- sort(unique(mamsMoll@data$binomial)) # 5265 species
 # get an idea of what a distribution could look like:
@@ -76,16 +75,16 @@ for (i in 151:500){ #length(speciesNames)){
 save(speciesStack, file="species10x10.Rdata")
 speciesStack100 <- aggregate(speciesStack, fact=c(10, 10), fun=sum)
 rm(speciesStack); gc() # release memory
-save.image(file="BIMC_alldata.Rdata")
+save(speciesStack, file="BIMC_species100x100.Rdata")
 ```
-```{r}
+```{r, eval=FALSE}
 load(file="BIMC_alldata.Rdata")
 # look at an example species in South America:
 plot(wrld, col="grey", border="white", xlim=c(-11000000, 15000000), ylim=c(-9100000, 8800000))
 plot(speciesStack100[[4]], col="red", add=T)
 ```
 Next, we compute the number of species in each cell.
-```{r}
+```{r, eval=FALSE}
 coords100 <- as.data.frame(xyFromCell(speciesStack100, 1:ncell(speciesStack100))) 
 cover100 <- as.data.frame(values(speciesStack100))
 #colnames(cover100) <- levels(speciesNames)
@@ -98,5 +97,60 @@ range(S <- rowSums(cover100, na.rm=T))
 excludeCells <- which(S == 0)
 library(lattice)
 levelplot(rowSums(cover100, na.rm=T)[-excludeCells] ~ coords100$x[-excludeCells] + coords100$y[-excludeCells], col.regions=colorRampPalette(c("cyan", "grey10"))(100))
+```
+
+### Rasterisation of species data: grid-range overlay (option 2).
+
+Instead of hoping that a species' range happens to include the centroid of the grid cell, we can better overlay grid and range and assign a "1" to each cell which has some part of the range in it.
+```{r, eval=T}
+setwd("/Users/cdormann/Data/aktuell/SpeciesDistributionAnalyses/BiodivModelComparison/RichnessRegression")
+library(raster)
+grid100 <- raster(nrow=155, ncols=355, xmn=-17702769, xmx=17876212, ymn=-6496757, ymx=9020048, crs=CRS('+proj=moll')) # make the 100 x 100 km grid
+coords100 <- as.data.frame(coordinates(grid100))
+```
+```{r, eval=F}
+grid100polygon <- rasterToPolygons(grid100)
+load("BIMC_alldata.Rdata") # loads mammal shapes and grid10 and speciesNames
+system.time(test <- over(grid100polygon, mamsMoll[which(mamsMoll@data$binomial == speciesNames[i]), ])$shape_Area) #extract only the area within each grid polygon; takes about 7 s
+length(test)
+dim(coords100)
+#which(!is.na(test$shape_Area))
+#test[24790,]
+coverPerCellAllSpecies <- list()
+for (i in 2001:length(speciesNames)){
+  test <- over(grid100polygon, mamsMoll[which(mamsMoll@data$binomial == speciesNames[i]), ])$shape_Area 
+  coverPerCellAllSpecies[[i]] <- test
+  rm(test)
+  print(i)
+}
+#save(coverPerCellAllSpecies, speciesNames, coords100, file="coverPerCellAllSpecies_100x100.Rdata")
+```
+```{r, echo=F}
+load(file="coverPerCellAllSpecies_100x100.Rdata")
+```
+```{r}
+coverPerCellAllSpecies.df <- as.data.frame(coverPerCellAllSpecies)
+colnames(coverPerCellAllSpecies.df) <- speciesNames[1:4]
+coverPerCellAllSpecies.df[is.na(coverPerCellAllSpecies.df)] <- 0 # replace all NAs by 0s
+S <- rowSums(coverPerCellAllSpecies.df > 0) # use different function here for other diversity measures!
+speciesRichness100 <- cbind(coords100, S)
+library(lattice)
+#levelplot(S ~ x + y, data=speciesRichness100)
+S <- ifelse(S==0, NA, S)
+levelplot(S ~ coords100$x + coords100$y, col.regions=rev(heat.colors(100))) # red is more!
+```
+
+## Environmental data
+The fundamental decision here is whether to include land-cover data. It seems reasonable that species are constrained by their physiology, so that climatic conditions are reasonable predictors. At the same time, habitat loss and modification is certainly the main change mammals experience. The current and future ranges of species are thus likely to be affected by land cover, too. 
+
+Ideally, one would include also human-aided dispersal (incl. deliberate or accidental introductions), but data are sparse. Will future mammal distribution be greatly affected by species escaping from the thousands of official and inofficial zoos and pet shops around the world? Which species will be fashionable in a few decades and hence traded world-wide?
+
+Here, we restrict ourselves to climatic and land-cover variables.
+
+CHECK THAT THE PREDICTORS USED ARE AVAILABLE (COMPUTABLE) FROM ISI-MIP SCENARIOS!!!
+```{r}
+aet <- raster("AET/ATAET00.asc") 
+if (is.na(projection(aet)) | projection(aet)=="NA" ) projection(aet) <- "+proj=longlat +ellps=WGS84 +towgs84=0,0,0,0,0,0,0 +no_defs" 
+
 ```
 
