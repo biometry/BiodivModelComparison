@@ -125,10 +125,8 @@ for (i in 2001:length(speciesNames)){
 }
 #save(coverPerCellAllSpecies, speciesNames, coords100, file="coverPerCellAllSpecies_100x100.Rdata")
 ```
-```{r, echo=F}
-load(file="coverPerCellAllSpecies_100x100.Rdata")
-```
-```{r}
+```{r plotRichnessMap, fig.width=10}
+load(file="coverPerCellAllSpecies_100x100.Rdata") # load data prepared with above code
 coverPerCellAllSpecies.df <- as.data.frame(coverPerCellAllSpecies)
 colnames(coverPerCellAllSpecies.df) <- speciesNames[1:4]
 coverPerCellAllSpecies.df[is.na(coverPerCellAllSpecies.df)] <- 0 # replace all NAs by 0s
@@ -145,12 +143,59 @@ The fundamental decision here is whether to include land-cover data. It seems re
 
 Ideally, one would include also human-aided dispersal (incl. deliberate or accidental introductions), but data are sparse. Will future mammal distribution be greatly affected by species escaping from the thousands of official and inofficial zoos and pet shops around the world? Which species will be fashionable in a few decades and hence traded world-wide?
 
-Here, we restrict ourselves to climatic and land-cover variables.
+Here, we restrict ourselves to climatic and land-cover variables. Data are provided as a text file with land cover at 0.5° x 0.5° resolution.
 
-CHECK THAT THE PREDICTORS USED ARE AVAILABLE (COMPUTABLE) FROM ISI-MIP SCENARIOS!!!
-```{r}
-aet <- raster("AET/ATAET00.asc") 
-if (is.na(projection(aet)) | projection(aet)=="NA" ) projection(aet) <- "+proj=longlat +ellps=WGS84 +towgs84=0,0,0,0,0,0,0 +no_defs" 
+```{r readBaseline}
+LC <- read.csv2("../LandUse_1970-1999.csv")
+summary(LC)
+library(lattice)
+levelplot(Dry.Savanna ~ Lon + Lat, data=LC)
+# rasterize
+# reproject to Mollweide
+# grid to grid100
+
+
+## climate data stuff
+#install.packages("climdex.pcic") # dependence of climates
+#install.packages("climates", repo='http://www.rforge.net/', depend=T)
+#library(climates)
+#biomclimVars <- bioclim(tmean=Thistoric[,-c(1,2)], prec=Phistoric[,-c(1,2)])
+
+Thistoric <- read.table("../DataFromJoerg/tas_ipsl-cm5a-lr_hist_1971-2000.csv", header=T)
+Phistoric <- read.table("../DataFromJoerg/pr_ipsl-cm5a-lr_hist_1971-2000.csv", header=T)
+
+# FIRST move southern hemisphere months by 6 months to have aligned summer & winter!!
+
+climatePreds <- cbind(Thistoric[,-c(1,2)], Phistoric[,-c(1,2)])
+colnames(climatePreds) <- c(paste0("T", colnames(Thistoric)[-c(1,2)]), paste0("P", colnames(Thistoric)[-c(1,2)]))
+
+# how does that look for the future?
+Tfuture <- read.table("../DataFromJoerg/tas_ipsl-cm5a-lr_rcp6p0_2050-2079.csv", header=T)
+Pfuture <- read.table("../DataFromJoerg/pr_ipsl-cm5a-lr_rcp6p0_2050-2079.csv", header=T)
+climatePredsFut <- cbind(Tfuture[,-c(1,2)], Pfuture[,-c(1,2)])
+colnames(climatePredsFut) <- c(paste0("T", colnames(Thistoric)[-c(1,2)]), paste0("P", colnames(Thistoric)[-c(1,2)]))
+par(mfrow=c(1,2))
+image(t(cor(climatePreds)[24:1,]), col=topo.colors(30), main="historic")
+image(t(cor(climatePredsFut)[24:1,]), col=topo.colors(30), main="future")
+# so the correlation structure now and future are very similar (good!)
+
+PCA <- prcomp(climatePreds, scale=T)
+
+biplot(PCA)
+
+# put LC and climate together
+indexLC <- apply(LC[,1:2], 1, function(x) paste(x[1], x[2], sep="_"))
+indexClim <- apply(Thistoric[,1:2], 1, function(x) paste(x[1], x[2], sep="_"))
+length(intersect(indexLC, indexClim)) # all climate data are in the LC data
+env <- merge(cbind.data.frame(index=indexLC, LC), cbind.data.frame(index=indexClim, climatePreds))
+summary(env)
+PCA <- prcomp(env[,-c(1:3)], scale=T)
+summary(PCA) # 22 variables before 95% is explained
+biplot(PCA) 
+envPCs <- PCA$x
+
+# now make the same data set for the future:
+envfuture <- merge(cbind.data.frame(index=indexLC, LC), cbind.data.frame(index=indexClim, climatePreds))
 
 ```
 
